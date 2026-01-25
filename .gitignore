@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv/
+*.egg-info/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Docker / Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.tfvars
+
+# IDE
+.vscode/
+.idea/

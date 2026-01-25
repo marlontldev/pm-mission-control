@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Agent A: The Sentinel (Reactive Layer)
+  # Monitors incoming data and flags risks.
+  sentinel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentinel-live
+    ports:
+      - "8080:8080"
+    environment:
+      - PROJECT_ID=pm-mission-control
+      - CPI_THRESHOLD=0.9
+      - PUBSUB_TOPIC=risk-events
+      # If set to 'local-test', it skips real Pub/Sub publishing
+      # Change to your real Project ID to attempt real publishing
+    volumes:
+      # Mount Google Cloud credentials so it can authenticate if needed
+      - ~/.config/gcloud:/root/.config/gcloud
+
+  # Agent B: The Strategist (Deliberative Layer)
+  # Uses Vertex AI to generate recovery plans.
+  strategist:
+    build:
+      context: src/strategist
+      dockerfile: Dockerfile
+    container_name: strategist-live
+    ports:
+      - "8081:8081"
+    environment:
+      - PROJECT_ID=pm-mission-control
+      - REGION=us-central1
+    volumes:
+      # CRITICAL: Mounts your local gcloud credentials into the container
+      # This allows the container to act as YOU when talking to Vertex AI
+      - ~/.config/gcloud:/root/.config/gcloud
