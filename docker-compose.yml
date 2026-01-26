@@ -11,9 +11,13 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - PROJECT_ID=pm-mission-control
+      #- PROJECT_ID=pm-mission-control
+      #- CPI_THRESHOLD=0.9
+      #- PUBSUB_TOPIC=risk-events
+      - PROJECT_ID=local-test
       - CPI_THRESHOLD=0.9
-      - PUBSUB_TOPIC=risk-events
+      - SHEET_NAME=Project_Alpha_Master
+      - TAB_NAME=Budget_Tracking
       # If set to 'local-test', it skips real Pub/Sub publishing
       # Change to your real Project ID to attempt real publishing
     volumes:

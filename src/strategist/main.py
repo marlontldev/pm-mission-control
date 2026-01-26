@@ -3,6 +3,7 @@ import logging
 from flask import Flask, request, jsonify
 import vertexai
 from vertexai.generative_models import GenerativeModel
+from datetime import datetime
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -61,8 +62,10 @@ def strategize():
     # 4. Return the Artifact
     artifact = {
         "strategy_id": "plan-alpha-1",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # <--- ADD THIS
         "target_audience": "Project Manager",
-        "content": advice
+        "content": advice,
+        "input_cpi": cpi # <--- GOOD PRACTICE: Return the input data too
     }
     
     logging.info(f"Strategy Generated: {advice[:50]}...")

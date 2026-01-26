@@ -2,89 +2,115 @@ import functions_framework
 import os
 import json
 import logging
-# We import 'requests' to allow this agent to make HTTP calls to other agents.
-# This is critical for our local simulation loop.
-import requests  
+import requests
+import google.auth
+import gspread
 from google.cloud import pubsub_v1
 
-# Setup standard logging so we can see output in the Docker terminal.
 logging.basicConfig(level=logging.INFO)
 
 # --- CONFIGURATION ---
-# PROJECT_ID: Used to determine if we are running locally or in Google Cloud.
 PROJECT_ID = os.environ.get("PROJECT_ID", "local-test")
-
-# TOPIC_NAME: The Pub/Sub topic name for the "Nervous System" (Cloud mode only).
 TOPIC_NAME = os.environ.get("PUBSUB_TOPIC", "risk-events")
-
-# CPI_THRESHOLD: The financial safety limit. Anything below 0.9 triggers a risk.
 CPI_THRESHOLD = float(os.environ.get("CPI_THRESHOLD", 0.9))
-
-# STRATEGIST_URL: The internal Docker address of Agent B.
-# 'http://strategist:8081' works because Docker Compose creates a
-# DNS entry named 'strategist' automatically for us.
 STRATEGIST_URL = os.environ.get("STRATEGIST_URL", "http://strategist:8081")
+
+# Sheets Config (No more CPI_CELL)
+SHEET_NAME = os.environ.get("SHEET_NAME", "Project_Alpha_Master")
+TAB_NAME = os.environ.get("TAB_NAME", "Budget_Tracking")
+
+def find_critical_tasks():
+    """
+    Scans the entire Budget_Tracking sheet.
+    Returns the task with the LOWEST CPI if it is below the threshold.
+    """
+    try:
+        # 1. Authenticate & Open
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds, _ = google.auth.default(scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+
+        # 2. Fetch All Data (Returns a list of dictionaries)
+        # Expected Headers: ['Cost Category', 'Budget (BAC)', 'Earned (EV)', 'Actual (AC)', 'CPI']
+        all_records = sheet.get_all_records()
+        
+        logging.info(f"Scanned {len(all_records)} project rows.")
+
+        critical_task = None
+        min_cpi = 100.0 # Start high
+
+        # 3. Analyze Each Row
+        for row in all_records:
+            task_name = row.get("Cost Category", "Unknown Task")
+            raw_cpi = row.get("CPI")
+
+            # Skip header rows or empty lines
+            if raw_cpi == "" or raw_cpi is None:
+                continue
+
+            try:
+                cpi_value = float(raw_cpi)
+            except ValueError:
+                continue # Skip if CPI is text
+
+            logging.info(f"Analyzing {task_name}: CPI={cpi_value}")
+
+            # Logic: Track the 'worst' CPI that is below threshold
+            if cpi_value < CPI_THRESHOLD:
+                if cpi_value < min_cpi:
+                    min_cpi = cpi_value
+                    critical_task = {
+                        "task_name": task_name,
+                        "cpi": cpi_value,
+                        "budget": row.get("Budget (BAC)")
+                    }
+
+        return critical_task
+
+    except Exception as e:
+        logging.error(f"Failed to scan Google Sheet: {e}")
+        return None
 
 @functions_framework.cloud_event
 def analyze_event(cloud_event):
-    """
-    The entry point. This function runs every time an event occurs
-    (e.g., a BigQuery job finishes or we send a manual curl command).
-    """
     try:
         logging.info(f"Event Received: {cloud_event['id']}")
         
-        # --- 1. SENSE (Simulated Data Collection) ---
-        # In a real app, we would query BigQuery here.
-        # For this test, we force the CPI to 0.82 to simulate a "Budget Breach".
-        current_cpi = 0.82 
-        
-        logging.info(f"Sentinel Analysis: CPI={current_cpi}")
+        # --- 1. SENSE (Dynamic Scanning) ---
+        logging.info("Scanning project for critical risks...")
+        worst_offender = find_critical_tasks()
 
-        # --- 2. THINK (Reactive Logic) ---
-        # Compare the sensed data against our rule (Threshold < 0.9).
-        if current_cpi < CPI_THRESHOLD:
-            logging.warning(f"BREACH DETECTED: CPI {current_cpi} < {CPI_THRESHOLD}")
+        if worst_offender:
+            current_cpi = worst_offender['cpi']
+            task_name = worst_offender['task_name']
+            
+            logging.warning(f"CRITICAL BREACH FOUND: {task_name} (CPI {current_cpi})")
 
-            # Prepare the "Risk Artifact" (JSON payload) to send to the brain.
+            # --- 2. THINK (Prepare Context) ---
             risk_payload = {
                 "event_id": cloud_event["id"],
                 "alert_type": "CPI_BREACH",
                 "details": { 
                     "current_value": current_cpi, 
-                    "threshold": CPI_THRESHOLD 
+                    "threshold": CPI_THRESHOLD,
+                    "failing_task": task_name, # Identifying WHO is failing
+                    "source": f"Sheet: {SHEET_NAME}"
                 }
             }
 
-            # --- 3. ACT (Communication) ---
-            # This block determines HOW we talk to the Strategist.
-            
-            # CONDITION: If we are running locally (Docker)
+            # --- 3. ACT (Trigger Strategist) ---
             if PROJECT_ID == "local-test" or PROJECT_ID == "pm-mission-control":
-                # STRATEGY: Direct Connection (HTTP)
-                # We skip Pub/Sub because it's complex to emulate locally.
-                # Instead, we just POST the JSON directly to Agent B's port 8081.
-                logging.info(f"[LOCAL] Triggering Strategist at {STRATEGIST_URL}...")
-                try:
-                    response = requests.post(STRATEGIST_URL, json=risk_payload)
-                    # We log the Strategist's reply immediately to prove the loop worked.
-                    logging.info(f"[LOCAL] Strategist Response: {response.json()}")
-                except Exception as req_err:
-                    logging.error(f"[LOCAL] Failed to call Strategist: {req_err}")
-            
-            # CONDITION: If we are running in the Real Cloud (GCP)
+                logging.info(f"[LOCAL] Triggering Strategist for {task_name}...")
+                requests.post(STRATEGIST_URL, json=risk_payload)
             else:
-                # STRATEGY: Event-Driven (Pub/Sub)
-                # We publish the message to the 'risk-events' topic.
-                # The Strategist will pick it up asynchronously.
                 publisher = pubsub_v1.PublisherClient()
                 topic_path = publisher.topic_path(PROJECT_ID, TOPIC_NAME)
                 data_str = json.dumps(risk_payload).encode("utf-8")
-                
                 publisher.publish(topic_path, data_str)
-                logging.info("Risk Alert Published to Pub/Sub.")
+        else:
+            logging.info("Scan complete. All tasks are healthy.")
                 
     except Exception as e:
-        # Catch-all error handler to prevent the container from crashing silenty.
         logging.error(f"Error in Sentinel Agent: {e}")
         raise e
