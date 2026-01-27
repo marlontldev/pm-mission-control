@@ -11,27 +11,90 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 AGENT_URL = "http://localhost:8081/"
-SHEET_NAME = "Mission Control Log"
+SPREADSHEET_NAME = "Mission Control Log"
 JSON_KEYFILE = "credentials.json"
 
-def get_google_sheet():
-    """Authenticates and connects to the Google Sheet."""
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_KEYFILE, scope)
-    client = gspread.authorize(creds)
-    return client.open(SHEET_NAME).sheet1
-
-def calculate_cpi(earned_value, actual_cost):
-    """Calculates CPI safely."""
+def get_worksheet():
+    """Authenticates and returns the first sheet (Tab 1) of the spreadsheet."""
     try:
-        if actual_cost == 0:
-            return 0.0 # Avoid division by zero
-        return round(earned_value / actual_cost, 2)
-    except Exception:
-        return 0.0
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_KEYFILE, scope)
+        client = gspread.authorize(creds)
+        
+        # Open the spreadsheet and get the first tab
+        return client.open(SPREADSHEET_NAME).sheet1
+    except Exception as e:
+        print(f"❌ Connection Error: {e}")
+        return None
+
+def update_dataset(sheet, data, cpi, source):
+    """Appends a new analysis row and formats it professionally."""
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    status_text = "CRITICAL" if cpi < 1.0 else "ON TRACK"
+    strategy = data.get('content', 'No content')
+
+    # 1. Check if Header Exists (First Run Only)
+    if sheet.row_count < 2 or sheet.acell('A1').value == "":
+        print("🆕 First run detected. Creating headers...")
+        headers = ["Timestamp", "Data Source", "CPI Value", "Project Status", "AI Recovery Strategy"]
+        sheet.insert_row(headers, index=1)
+        # Format Headers (Bold, Grey Background)
+        sheet.format("A1:E1", {
+            "textFormat": {"bold": True},
+            "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
+        })
+
+    # 2. Append the New Data Row
+    row_data = [timestamp, source, cpi, status_text, strategy]
+    sheet.append_row(row_data)
+    
+    # 3. Apply Professional Formatting to the New Row
+    # We find the row number we just added
+    last_row = len(sheet.get_all_values()) 
+    
+    # Define Formats
+    fmt_wrap = {"wrapStrategy": "WRAP"} # Keep long text readable
+    fmt_center = {"horizontalAlignment": "CENTER"}
+    fmt_status_color = {
+        "textFormat": {
+            "bold": True, 
+            "foregroundColor": {"red": 1.0 if cpi < 1.0 else 0.0, "green": 0.5 if cpi >= 1.0 else 0.0, "blue": 0.0}
+        }
+    }
+
+    # Apply Formats range by range for efficiency
+    # Center align Timestamp, Source, CPI, Status (Cols A-D)
+    sheet.format(f"A{last_row}:D{last_row}", fmt_center)
+    
+    # Color the Status Cell (Column D) Red or Green
+    sheet.format(f"D{last_row}", fmt_status_color)
+    
+    # Wrap the Strategy Text (Column E) so it doesn't overflow
+    sheet.format(f"E{last_row}", fmt_wrap)
+
+    print(f"✨ Dataset updated successfully at Row {last_row}")
+
+def consult_strategist(current_cpi, data_source):
+    print("\n📡 Connecting to Google Sheets...")
+    sheet = get_worksheet()
+    if not sheet: return
+
+    print(f"🤖 Consulting Strategist Agent (CPI: {current_cpi})...")
+    payload = {"details": {"current_value": current_cpi}}
+    
+    try:
+        response = requests.post(AGENT_URL, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Update the Dataset
+        update_dataset(sheet, data, current_cpi, data_source)
+
+    except Exception as e:
+        print(f"❌ Error during analysis: {e}")
 
 def get_project_data():
-    """Asks user for input method and returns the calculated CPI."""
     print("\n" + "="*40)
     print("📊 DATA INPUT MODE")
     print("1. Direct Input (I know the CPI)")
@@ -41,64 +104,21 @@ def get_project_data():
     choice = input("Select Option (1 or 2): ").strip()
     
     if choice == "1":
-        # Option 1: You know the status already
-        cpi = float(input(">> Enter current CPI (e.g., 0.85): "))
-        return cpi, "Manual Input"
-        
+        try:
+            val = float(input(">> Enter current CPI (e.g., 0.85): "))
+            return val, "Manual Input"
+        except:
+            return 1.0, "Error"
     elif choice == "2":
-        # Option 2: You have the receipts and progress logs
-        print("\n--- Enter Financials ---")
-        ev = float(input(">> Earned Value ($) - Value of work completed: "))
-        ac = float(input(">> Actual Cost ($) - Money spent so far: "))
-        
-        calculated_cpi = calculate_cpi(ev, ac)
-        
-        print(f"\n⚡ CALCULATED RESULT: ${ev} / ${ac} = CPI {calculated_cpi}")
-        if calculated_cpi < 1.0:
-            print("⚠️  WARNING: Project is over budget.")
-        else:
-            print("✅ STATUS: Project is under budget.")
-            
-        return calculated_cpi, f"Calc (EV:{ev}|AC:{ac})"
-    
-    else:
-        print("Invalid selection. Defaulting to 1.0")
-        return 1.0, "Error"
-
-def consult_strategist(current_cpi, data_source):
-    # 1. Connect to Sheets
-    print("\n📡 Connecting to Google Sheets...")
-    sheet = get_google_sheet()
-
-    # 2. Call AI Agent
-    print(f"🤖 Consulting Strategist Agent (CPI: {current_cpi})...")
-    payload = {"details": {"current_value": current_cpi}}
-    
-    try:
-        response = requests.post(AGENT_URL, json=payload)
-        response.raise_for_status()
-        data = response.json()
-        
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        strategy_content = data.get('content', 'No content')
-
-        # 3. Display Report
-        print("\n" + "="*60)
-        print(f"✅ STRATEGIC ANALYSIS COMPLETE")
-        print(f"📅 Time: {timestamp}")
-        print(f"📉 CPI Status: {current_cpi}")
-        print("-" * 60)
-        print(f"📋 ADVICE:\n{strategy_content}")
-        print("="*60)
-
-        # 4. Update Graph (Now includes the Data Source)
-        # Columns: [Timestamp, CPI, Strategy, Data Source]
-        sheet.append_row([timestamp, current_cpi, strategy_content, data_source])
-        print("✨ Google Sheet & Graph updated successfully.")
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        try:
+            ev = float(input(">> Earned Value ($): "))
+            ac = float(input(">> Actual Cost ($): "))
+            cpi = round(ev / ac, 2) if ac != 0 else 0
+            return cpi, f"Calc (EV:{ev}|AC:{ac})"
+        except:
+            return 1.0, "Error"
+    return 1.0, "Error"
 
 if __name__ == "__main__":
-    cpi_value, source_note = get_project_data()
-    consult_strategist(cpi_value, source_note)
+    cpi, source = get_project_data()
+    consult_strategist(cpi, source)
