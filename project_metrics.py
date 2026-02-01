@@ -1,3 +1,5 @@
+from datetime import datetime
+
 def clean_currency(value_str):
     try: return float(str(value_str).replace('$', '').replace(',', '').strip())
     except: return 0.0
@@ -5,7 +7,6 @@ def clean_currency(value_str):
 def get_active_projects(rows):
     """
     Scans the budget sheet to find unique Active projects and their LATEST period.
-    Returns: Dict {'PROJ-001': {'name': 'Alpha Tower', 'latest_period': '2026-02'}}
     """
     projects = {}
     if not rows: return projects
@@ -17,7 +18,7 @@ def get_active_projects(rows):
         idx_status = headers.index("Status")
         idx_period = headers.index("Report Period")
     except ValueError:
-        return {} # Missing columns
+        return {} 
 
     for r in rows[1:]:
         pid = r[idx_id]
@@ -28,53 +29,66 @@ def get_active_projects(rows):
             if pid not in projects:
                 projects[pid] = {'name': r[idx_name], 'latest_period': period}
             else:
-                # Update if we find a newer period (Simple string comparison works for YYYY-MM)
                 if period > projects[pid]['latest_period']:
                     projects[pid]['latest_period'] = period
                     
     return projects
 
-def calculate_financials(rows, project_id, period):
+def get_project_lifecycle(rows, project_id):
     """
-    Calculates metrics for a SPECIFIC Project ID in a SPECIFIC Period.
+    Extracts the FULL history of CPIs for a project, sorted by date.
+    Returns: A list of dicts [{'period': '2026-01', 'cpi': 1.0}, ...]
     """
-    metrics = {"cpi": 0.0, "bac": 0.0, "eac": 0.0, "variance": 0.0, "tcpi": 0.0, "root_causes": []}
-    
+    history = []
     headers = rows[0]
     idx_id = headers.index("Project ID")
     idx_period = headers.index("Report Period")
     idx_cat = headers.index("Cost Category")
-    idx_bac = headers.index("Budget (BAC)")
-    idx_ev = headers.index("Earned Value (EV)")
-    idx_ac = headers.index("Actual Cost (AC)")
     idx_cpi = headers.index("CPI (EV/AC)")
 
+    for r in rows[1:]:
+        # We only care about the "TOTAL PROJECT" row for the high-level trend
+        if r[idx_id] == project_id and "TOTAL PROJECT" in r[idx_cat].upper():
+            try:
+                history.append({
+                    'period': r[idx_period],
+                    'cpi': float(r[idx_cpi])
+                })
+            except: pass
+            
+    # Sort by period to ensure time order (Jan -> Feb -> Mar)
+    history.sort(key=lambda x: x['period'])
+    return history
+
+def calculate_financials(rows, project_id, period):
+    # (Same function as before, calculating specific metrics for ONE period)
+    metrics = {"cpi": 0.0, "bac": 0.0, "eac": 0.0, "variance": 0.0, "tcpi": 0.0, "root_causes": []}
+    
+    headers = rows[0]
+    idx_id, idx_period, idx_cat, idx_bac, idx_ev, idx_ac, idx_cpi = [
+        headers.index(col) for col in ["Project ID", "Report Period", "Cost Category", "Budget (BAC)", "Earned Value (EV)", "Actual Cost (AC)", "CPI (EV/AC)"]
+    ]
+    
     total_ev = 0
     total_ac = 0
 
     for r in rows[1:]:
-        # FILTER: Must match BOTH Project ID and the Period
         if r[idx_id] == project_id and r[idx_period] == period:
-            
-            # Root Cause Logic
             try:
                 val = float(r[idx_cpi])
                 if val < 0.95 and "TOTAL PROJECT" not in r[idx_cat].upper():
                     metrics["root_causes"].append(f"{r[idx_cat]} (CPI: {val})")
             except: pass
 
-            # Totals
             if "TOTAL PROJECT" in r[idx_cat].upper():
                 metrics["cpi"] = float(r[idx_cpi])
                 metrics["bac"] = clean_currency(r[idx_bac])
                 total_ev = clean_currency(r[idx_ev])
                 total_ac = clean_currency(r[idx_ac])
 
-    # Advanced Calculations
     if metrics["cpi"] > 0:
         metrics["eac"] = metrics["bac"] / metrics["cpi"]
         metrics["variance"] = metrics["eac"] - metrics["bac"]
-        
         rem_budget = metrics["bac"] - total_ac
         rem_work = metrics["bac"] - total_ev
         metrics["tcpi"] = (rem_work / rem_budget) if rem_budget != 0 else 9.99
