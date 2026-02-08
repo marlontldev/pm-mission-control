@@ -3,6 +3,7 @@
 PM Mission Control is an autonomous, "Loop-in-the-Loop" agentic system designed to monitor Project Management KPIs (like CPI and SPI) and generate strategic recovery plans using Generative AI.
 
 Unlike passive dashboards, this system features active agents that perceive project risks and reason through solutions using Google Vertex AI.
+
 🏗️ Architecture
 
 The system consists of two primary agents running as microservices:
@@ -23,8 +24,7 @@ The system consists of two primary agents running as microservices:
 
         Tech: Python, Flask, Vertex AI.
 
-Code snippet
-
+```mermaid
 graph TD
     User([User / Event Source]) -->|1. HTTP POST| Sentinel[Agent A: Sentinel]
     Sentinel -->|2. Detect Breach| Sentinel
@@ -33,6 +33,7 @@ graph TD
     VertexAI -- Strategy --> Strategist
     Strategist -- JSON Plan --> Sentinel
     Sentinel -- Log Output --> User
+```
 
 🛠️ Prerequisites
 
@@ -42,36 +43,68 @@ Before running the system, ensure you have the following installed in your WSL/L
 
     Google Cloud SDK (gcloud)
 
-    Python 3.11+ (for local scripts, optional)
+    Python 3.11+ (for local scripts)
 
 Critical Setup Step
 
 You must authenticate with Google Cloud locally so the Docker containers can access Vertex AI:
-Bash
 
+```bash
 gcloud auth application-default login
+```
 
 🚀 Quick Start
+
 1. Clone & Configure
 
 Navigate to the project directory:
-Bash
 
+```bash
 cd ~/Repos/pm-mission-control
+```
 
-2. Build & Launch
+2. Install Local Dependencies
+
+The local simulation scripts require a few Python packages:
+
+```bash
+pip install requests gspread oauth2client
+```
+
+3. Initialize Data
+
+Reset the Google Sheets to a clean state with historical data:
+
+```bash
+python reset_data.py
+```
+
+4. Build & Launch Agents
 
 Use Docker Compose to build the images and start the agent network:
-Bash
 
+```bash
 docker-compose up --build
+```
 
 You will see logs from both sentinel-live and strategist-live indicating they are listening on ports 8080 and 8081.
-3. Trigger the Simulation
 
-Open a new terminal tab and trigger the Sentinel with a mock "BigQuery" event. This starts the autonomous loop:
-Bash
+5. Trigger the Simulation
 
+You can interact with the system in two ways:
+
+**Option A: Run the Mission Control Center (Recommended)**
+Open a new terminal tab and run the interactive simulation script:
+
+```bash
+python mission_control.py
+```
+This script acts as the client interface, analyzing project metrics and triggering the agents when issues are found.
+
+**Option B: Manual Trigger via Curl**
+Trigger the Sentinel directly with a mock "BigQuery" event:
+
+```bash
 curl -X POST localhost:8080 \
   -H "Content-Type: application/json" \
   -H "ce-id: 12345" \
@@ -79,8 +112,9 @@ curl -X POST localhost:8080 \
   -H "ce-type: google.cloud.audit.log.v1.written" \
   -H "ce-source: //cloudaudit.googleapis.com/projects/my-project/logs/activity" \
   -d '{"protoPayload": {"serviceName": "bigquery.googleapis.com"}}'
+```
 
-4. Verify Output
+6. Verify Output
 
 Switch back to your Docker terminal. You should see:
 
@@ -93,22 +127,28 @@ Switch back to your Docker terminal. You should see:
     Sentinel: [LOCAL] Strategist Response: { "content": "Okay, Project Team..." }
 
 📂 Project Structure
-Plaintext
 
+```plaintext
 pm-mission-control/
-├── docker-compose.yml       # Local orchestration
+├── docs/
+│   └── PROJECT_AUDIT.md     # Documentation audit and architectural recommendations
 ├── infrastructure/          # Terraform (Cloud Deployment)
 │   ├── main.tf
 │   └── iam.tf
 ├── src/
-│   ├── sentinel/            # Agent A Source Code
+│   ├── sentinel/            # Agent A Source Code (Cloud Function)
 │   │   ├── main.py
 │   │   └── requirements.txt
-│   └── strategist/          # Agent B Source Code
-│       ├── main.py          # Flask App + Vertex AI Logic
+│   └── strategist/          # Agent B Source Code (Flask App)
+│       ├── main.py
 │       ├── Dockerfile
 │       └── requirements.txt
+├── docker-compose.yml       # Local orchestration
+├── mission_control.py       # Main simulation client
+├── project_metrics.py       # Financial calculation logic
+├── reset_data.py            # Utility to reset Google Sheets data
 └── README.md
+```
 
 ⚠️ Configuration
 
