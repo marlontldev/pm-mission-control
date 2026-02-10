@@ -14,3 +14,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the web service on container startup using functions-framework.
 CMD exec functions-framework --target=analyze_event --signature-type=cloudevent
+
+# # 1. Use a newer, secure Python version (Lightweight Enterprise Image)
+# FROM python:3.11-slim
+#
+# # 2. Set the working directory
+# WORKDIR /app
+#
+# # 3. Install system dependencies (if needed)
+# RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev \
+#     && rm -rf /var/lib/apt/lists/*
+#
+# # 4. Copy requirements and install
+# COPY requirements.txt .
+# RUN pip install --no-cache-dir -r requirements.txt
+#
+# # 5. Copy application code
+# COPY . .
